@@ -2,7 +2,7 @@
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=141E30,243B55&height=160&section=header&text=CLAUDE-AI-API&fontSize=42&fontColor=ffffff&fontAlignY=42&desc=Chat%2C%20image%20generation%20and%20image%20editing%20via%20duck.ai%20%E2%80%94%20no%20API%20key%2C%20no%20account&descAlignY=62&descSize=16" width="100%"/>
 
-<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6366F1&center=true&vCenter=true&width=560&lines=Welcome+to+CLAUDE-AI-API;Claude+Haiku+5.5+%7C+Claude+Sonnet+5.5;OpenAI-Compatible+%7C+No+API+Key+Needed;Built+with+Node.js" alt="Typing SVG" /></a>
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6366F1&center=true&vCenter=true&width=560&lines=Welcome+to+CLAUDE-AI-API;Claude+Haiku+5.5+Only;OpenAI-Compatible+%7C+No+API+Key+Needed;Built+with+Node.js" alt="Typing SVG" /></a>
 
 <br/>
 
@@ -27,7 +27,7 @@ It talks to duck.ai's backend the same way the official web frontend does: it sc
 
 ## ✨ Features
 
-- 💬 **Claude only** — Claude Haiku 5.5 (free) and Claude Sonnet 5.5 (paid)
+- 💬 **Claude Haiku 5.5 only** — free, no other models
 - 🖼️ **Image generation** — powered behind the scenes by OpenAI's gpt-image model
 - ✏️ **Image editing** — upload a photo and describe the edit
 - 🔌 **Three API styles** — simple GET endpoints, plain POST JSON, and a full OpenAI-compatible API with streaming
@@ -80,14 +80,12 @@ curl "http://localhost:3000/chat?message=Hello&model=Claude%20Haiku%205.5"
 
 | Name (use this in requests) | Model ID | Provider | Notes |
 |---|---|---|---|
-| `Claude Haiku 5.5` | `claude-haiku-5-5` | Anthropic | Default. Fast Claude, natural writing (free; `"Claude Haiku"` still works as an alias) |
-| `Claude Sonnet 5.5` | `claude-sonnet-5-5` | Anthropic | **Paid** — needs a DuckDuckGo subscription |
+| `Claude Haiku 5.5` | `claude-haiku-5-5` | Anthropic | Fast Claude, natural writing (free; `"Claude Haiku"` still works as an alias) |
 
-You can pass either the friendly name (`"Claude Haiku 5.5"`) or the raw model ID (`"claude-haiku-5-5"`). Paid models return a clear `MODEL_RESTRICTED` error on free (anonymous) access. Unknown model names are rejected with a `400` error that lists the available models.
+You can pass either the friendly name (`"Claude Haiku 5.5"`) or the raw model ID (`"claude-haiku-5-5"`). Unknown model names are rejected with a `400` error that lists the available models.
 
 > **About image generation and editing:** the chat models do not render images themselves. The chat model rewrites your prompt into a detailed one, then delegates the actual rendering to a dedicated image model (OpenAI's gpt-image, served through DuckDuckGo). Responses include the model's `title` and the `revised_prompt` it used.
 
-> **System prompt:** the server ships a built-in capability prompt in `prompt.txt` (project root). On every chat request it is prepended as context — the assistant works as NIJHUM, an expert all-rounder that completes tasks fully and fast. Edit the file and restart the server to change it; set `DUCK_SYSTEM_PROMPT=0` to disable it. It applies to chat only, not to image generation or editing.
 
 ---
 
@@ -253,7 +251,6 @@ CLAUDE-AI-API/
 │   └── agent.js         # Agent mode (tools, step-by-step tasks)
 ├── examples/            # Calling the API from JavaScript and Python
 ├── capture.json         # A recorded live duck.ai session (reference)
-├── prompt.txt           # Built-in system prompt
 ├── package.json
 └── README.md
 ```

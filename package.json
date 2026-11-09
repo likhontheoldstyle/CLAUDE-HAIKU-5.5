@@ -5,7 +5,7 @@
     "jsdom": "^30.1.3",
     "pngjs": "^7.0.0"
   },
-  "description": "API to use the duck.ai Claude models (Haiku 5.5, Sonnet 5.5) via direct scraping - POST /chat, no browser automation",
+  "description": "API to use the duck.ai Claude Haiku 5.5 model via direct scraping - POST /chat, no browser automation",
   "engines": {
     "node": ">=18"
   },
