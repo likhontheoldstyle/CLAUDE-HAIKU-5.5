@@ -1,6 +1,5 @@
 export const KNOWN_MODELS = [
   { id: "Claude Haiku 5.5", label: "Claude Haiku 5.5 (free)" },
-  { id: "Claude Sonnet 5.5", label: "Claude Sonnet 5.5 (paid)" },
 ];
 
 export const UPSTREAM = {

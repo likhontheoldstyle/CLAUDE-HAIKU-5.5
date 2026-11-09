@@ -88,10 +88,8 @@ export async function getTransport() {
 export const MODEL_IDS = {
   "Claude Haiku": "claude-haiku-5-5",
   "Claude Haiku 5.5": "claude-haiku-5-5",
-  "Claude Sonnet": "claude-sonnet-5-5",
-  "Claude Sonnet 5.5": "claude-sonnet-5-5",
 };
-export const PAID_MODELS = ["Claude Sonnet", "Claude Sonnet 5.5"];
+export const PAID_MODELS = [];
 
 export let LAST_RAW = null;
 export function getLastRaw() { return LAST_RAW; }
