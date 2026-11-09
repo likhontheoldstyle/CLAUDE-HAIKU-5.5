@@ -5,18 +5,18 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { KNOWN_MODELS, sendUpstream } from "./src/duckClient.js";
 import { chatViaBrowser } from "./src/browserClient.js";
-import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE, getLastRaw } from "./src/scrapeClient.js";
+import { sendChat, MODEL_IDS, getLastRaw } from "./src/client.js";
 import { runAgent } from "./src/agent.js";
 
 const PORT = Number(process.env.PORT || 3000);
-const MODE = process.env.DUCK_MODE || "scrape";
+const MODE = process.env.DUCK_MODE || "direct";
 const STARTED_AT = Date.now();
 let PKG_VERSION = "";
 try { PKG_VERSION = JSON.parse(fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")).version || ""; } catch {}
 let ADMIN_KEY = process.env.ADMIN_KEY || "";
 try { if (!ADMIN_KEY) ADMIN_KEY = fs.readFileSync(new URL("./.admin-key", import.meta.url), "utf8").trim(); } catch {}
 
-const CAPTURED = { model: "Claude Haiku", message: "hi", response: "Hi! How can I help?" };
+const MOCK_SAMPLE = { model: "Claude Haiku", message: "hi", response: "Hi! How can I help?" };
 
 const MIN_INTERVAL_MS = Number(process.env.DUCK_MIN_INTERVAL_MS || 3000);
 const CACHE_TTL_MS = Number(process.env.DUCK_CACHE_TTL_MS || 600_000);
@@ -43,7 +43,7 @@ function rememberImage(out) {
   }
 }
 
-function enqueueScrape(args) {
+function enqueueChat(args) {
   const imgTag = args.imageData ? ":" + args.imageData.length + ":" + args.imageData.slice(-24) : "";
   const key = JSON.stringify([args.model, args.image ? 1 : 0, JSON.stringify(args.messages || args.message || "") + imgTag]);
   const hit = args.fresh ? null : _cache.get(key);
@@ -53,7 +53,7 @@ function enqueueScrape(args) {
     if (gap > 0) await _sleep(gap);
     try {
       _lastCallAt = Date.now();
-      const out = await chatViaScrape(args);
+      const out = await sendChat(args);
       _cache.set(key, { at: Date.now(), out });
       return out;
     } catch (e) {
@@ -61,7 +61,7 @@ function enqueueScrape(args) {
         console.log(`[claude-ai-api] 429 rate limit — waiting ${Math.round(WAIT_429_MS / 1000)}s, then one retry`);
         await _sleep(WAIT_429_MS);
         _lastCallAt = Date.now();
-        const out = await chatViaScrape(args);
+        const out = await sendChat(args);
         _cache.set(key, { at: Date.now(), out });
         return out;
       }
@@ -73,7 +73,7 @@ function enqueueScrape(args) {
   return p;
 }
 
-function enqueueScrapeStream(args, onToken) {
+function enqueueChatStream(args, onToken) {
   const imgTag = args.imageData ? ":" + args.imageData.length + ":" + args.imageData.slice(-24) : "";
   const key = JSON.stringify([args.model, args.image ? 1 : 0, JSON.stringify(args.messages || args.message || "") + imgTag]);
   const hit = args.fresh ? null : _cache.get(key);
@@ -95,7 +95,7 @@ function enqueueScrapeStream(args, onToken) {
     const emit = (t) => { emitted += t.length; try { onToken(t); } catch {} };
     try {
       _lastCallAt = Date.now();
-      const out = await chatViaScrape({ ...args, onToken: emit });
+      const out = await sendChat({ ...args, onToken: emit });
       _cache.set(key, { at: Date.now(), out });
       return out;
     } catch (e) {
@@ -103,7 +103,7 @@ function enqueueScrapeStream(args, onToken) {
         console.log(`[claude-ai-api] 429 rate limit — waiting ${Math.round(WAIT_429_MS / 1000)}s, then one retry`);
         await _sleep(WAIT_429_MS);
         _lastCallAt = Date.now();
-        const out = await chatViaScrape({ ...args, onToken: emit });
+        const out = await sendChat({ ...args, onToken: emit });
         _cache.set(key, { at: Date.now(), out });
         return out;
       }
@@ -226,7 +226,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("access-control-allow-headers", "content-type, authorization, x-api-key");
     if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
     if (req.method === "GET" && (req.url === "/" || req.url === "")) {
-      return json(res, 200, { ok: true, name: "CLAUDE-AI-API", version: PKG_VERSION, mode: MODE, endpoints: ["GET /health", "GET /models", "GET /scrape-status", "POST /chat", "POST /image", "POST /image-edit", "POST /agent"] });
+      return json(res, 200, { ok: true, name: "CLAUDE-AI-API", version: PKG_VERSION, mode: MODE, endpoints: ["GET /health", "GET /models", "POST /chat", "POST /image", "POST /image-edit", "POST /agent"] });
     }
     if (req.method === "GET" && req.url === "/health") {
       return json(res, 200, { ok: true, mode: MODE, version: PKG_VERSION, uptime_s: Math.floor((Date.now() - STARTED_AT) / 1000), models: Object.keys(MODEL_IDS),
@@ -235,19 +235,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/models") {
       return json(res, 200, { models: MODEL_IDS, known: KNOWN_MODELS });
     }
-    if (req.method === "GET" && req.url === "/capture") return json(res, 200, CAPTURED);
     if (req.method === "GET" && req.url === "/debug-last") {
       const raw = getLastRaw();
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
       if (!raw) return res.end("no request yet");
       return res.end(`at=${raw.at} model=${raw.model} image=${raw.image} variant=${raw.variant} bytes=${raw.text.length}\n\n${raw.text.slice(0, 60000)}`);
-    }
-    if (req.method === "GET" && req.url === "/scrape-status") {
-
-      const fe = await scrapeVersions();
-      const ch = await getChallenge(fe, newJourneyId());
-      const transport = (await getTransport()).kind;
-      return json(res, 200, { transport, deviceProfile: PROFILE.name, userAgent: PROFILE.ua, phase1: fe, phase2: { statusBody: ch.statusBody, jsaLength: ch.jsa.length, jsaPrefix: ch.jsa.slice(0, 24) + "…" } });
     }
 
     if (req.method === "GET" && (req.url.startsWith("/chat?") || req.url.startsWith("/image?"))) {
@@ -259,17 +251,17 @@ const server = http.createServer(async (req, res) => {
       if (!text) {
         return json(res, 400, { error: isImage ? "Use /image?prompt=a+cat+in+space" : "Use /chat?message=hi&model=Claude%20Haiku%205.5" });
       }
-      if (MODE !== "scrape") {
+      if (MODE !== "direct") {
         if (isImage) {
-          if (MODE !== "mock") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
+          if (MODE !== "mock") return json(res, 400, { error: "Image generation needs DUCK_MODE=direct" });
           const mockOut = { images: [mockImageData(text)], title: "Mock image", revised_prompt: text, reply: "" };
           rememberImage(mockOut);
           return json(res, 200, imageShape({ model, prompt: text, out: mockOut }));
         }
-        const reply = text.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${text}`;
+        const reply = text.trim().toLowerCase() === "hi" ? MOCK_SAMPLE.response : `[mock:${model}] You said: ${text}`;
         return json(res, 200, chatShape({ model, reply }));
       }
-      const out = await enqueueScrape({ message: text, model, image: isImage, fresh: u.searchParams.get("fresh") === "1" });
+      const out = await enqueueChat({ message: text, model, image: isImage, fresh: u.searchParams.get("fresh") === "1" });
       if (isImage) rememberImage(out);
       if (isImage) return json(res, 200, imageShape({ model: out.model, prompt: text, out, extra: { debug: out.debug, ...(out.cached ? { cached: true } : {}) } }));
       return json(res, 200, chatShape({ model: out.model, reply: out.reply, extra: { ...(out.cached ? { cached: true } : {}) } }));
@@ -293,17 +285,17 @@ const server = http.createServer(async (req, res) => {
         sendEvent({ type: "final", reply: "[mock agent] Kaj sesh: " + task });
         return res.end();
       }
-      if (MODE !== "scrape") { sendEvent({ type: "error", error: "Agent mode needs DUCK_MODE=scrape" }); return res.end(); }
+      if (MODE !== "direct") { sendEvent({ type: "error", error: "Agent mode needs DUCK_MODE=direct" }); return res.end(); }
       try {
         await runAgent({
           task,
           model,
           chatText: async (messages) => {
-            const out = await enqueueScrape({ message: task, messages, model, image: false, fresh: true, systemContext: false });
+            const out = await enqueueChat({ message: task, messages, model, image: false, fresh: true, systemContext: false });
             return out.reply || "";
           },
           genImage: async (prompt, m) => {
-            const out = await enqueueScrape({ message: prompt, model: m || model, image: true, fresh: true });
+            const out = await enqueueChat({ message: prompt, model: m || model, image: true, fresh: true });
             rememberImage(out);
             return out;
           },
@@ -324,8 +316,8 @@ const server = http.createServer(async (req, res) => {
       const model = body.model || process.env.DUCK_MODEL || "Claude Haiku";
       if (!isKnownModel(model)) return json(res, 400, unknownModelError(model));
 
-      if (MODE === "scrape") {
-        const out = await enqueueScrape({ message, messages: body.messages, model, image: !!body.image });
+      if (MODE === "direct") {
+        const out = await enqueueChat({ message, messages: body.messages, model, image: !!body.image });
         if (body.image) { rememberImage(out); return json(res, 200, imageShape({ model: out.model, prompt: message, out, extra: { debug: out.debug } })); }
         return json(res, 200, chatShape({ model: out.model, reply: out.reply, extra: { ...(out.cached ? { cached: true } : {}) } }));
       }
@@ -339,7 +331,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "text/event-stream" });
         return res.end(await upstream.text());
       }
-      const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
+      const reply = message.trim().toLowerCase() === "hi" ? MOCK_SAMPLE.response : `[mock:${model}] You said: ${message}`;
       return json(res, 200, chatShape({ model, reply }));
     }
 
@@ -352,7 +344,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
       const sendEvent = (obj) => { try { res.write("data: " + JSON.stringify(obj) + "\n\n"); } catch {} };
       if (MODE === "mock") {
-        const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
+        const reply = message.trim().toLowerCase() === "hi" ? MOCK_SAMPLE.response : `[mock:${model}] You said: ${message}`;
         const words = reply.split(/(?<=\s)/);
         for (const w of words) {
           if (!w) continue;
@@ -362,12 +354,12 @@ const server = http.createServer(async (req, res) => {
         sendEvent({ type: "done", result: chatShape({ model, reply }) });
         return res.end();
       }
-      if (MODE !== "scrape") {
-        sendEvent({ type: "error", error: "Streaming sudhu scrape mode-e chole" });
+      if (MODE !== "direct") {
+        sendEvent({ type: "error", error: "Streaming sudhu direct mode-e chole" });
         return res.end();
       }
       try {
-        const out = await enqueueScrapeStream(
+        const out = await enqueueChatStream(
           { message, messages: body.messages, model, image: false },
           (t) => sendEvent({ type: "token", text: t })
         );
@@ -411,13 +403,13 @@ const server = http.createServer(async (req, res) => {
       const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content || "";
 
       let out;
-      if (MODE === "scrape") {
-        out = await enqueueScrape({ message: lastUser, messages, model: modelName, image: false });
+      if (MODE === "direct") {
+        out = await enqueueChat({ message: lastUser, messages, model: modelName, image: false });
       } else if (MODE === "browser") {
         const b = await chatViaBrowser({ message: lastUser, model: modelName });
         out = { model: MODEL_IDS[modelName] || modelName, reply: b.reply };
       } else {
-        out = { model: MODEL_IDS[modelName] || modelName, reply: lastUser.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${modelName}] You said: ${lastUser}` };
+        out = { model: MODEL_IDS[modelName] || modelName, reply: lastUser.trim().toLowerCase() === "hi" ? MOCK_SAMPLE.response : `[mock:${modelName}] You said: ${lastUser}` };
       }
       const modelId = MODEL_IDS[modelName] || out.model || modelName;
       const id = "chatcmpl-" + Math.random().toString(36).slice(2, 24);
@@ -443,10 +435,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/v1/images/generations") {
       const body = await readBody(req);
       if (!body.prompt) return json(res, 400, { error: { message: 'Send {"prompt":"a cat in space"}', type: "invalid_request_error", code: null } });
-      if (MODE !== "scrape") return json(res, 400, { error: { message: "Image generation needs DUCK_MODE=scrape", type: "invalid_request_error", code: null } });
+      if (MODE !== "direct") return json(res, 400, { error: { message: "Image generation needs DUCK_MODE=direct", type: "invalid_request_error", code: null } });
       const model = body.model || "Claude Haiku";
       if (!isKnownModel(model)) return json(res, 400, { error: { message: `Unknown model "${model}". Available models: ${Object.keys(MODEL_IDS).join(", ")}.`, type: "invalid_request_error", code: "model_not_found" } });
-      const out = await enqueueScrape({ message: body.prompt, model, image: true });
+      const out = await enqueueChat({ message: body.prompt, model, image: true });
       rememberImage(out);
       return json(res, 200, {
         created: Math.floor(Date.now() / 1000),
@@ -473,8 +465,8 @@ const server = http.createServer(async (req, res) => {
       const model = body.model || "Claude Haiku";
       if (!isKnownModel(model)) return json(res, 400, unknownModelError(model));
       if (MODE === "mock") return json(res, 200, imageShape({ model: body.model || "Claude Haiku", prompt: body.prompt, out: { images: [] } }));
-      if (MODE !== "scrape") return json(res, 400, { error: "image edit requires DUCK_MODE=scrape" });
-      const out = await enqueueScrape({ message: body.prompt, model: body.model || "Claude Haiku", image: true, imageData: body.image, imageMime: body.mime });
+      if (MODE !== "direct") return json(res, 400, { error: "image edit requires DUCK_MODE=direct" });
+      const out = await enqueueChat({ message: body.prompt, model: body.model || "Claude Haiku", image: true, imageData: body.image, imageMime: body.mime });
       rememberImage(out);
       return json(res, 200, imageShape({ model: out.model, prompt: body.prompt, out, extra: { debug: out.debug } }));
     }
@@ -489,13 +481,13 @@ const server = http.createServer(async (req, res) => {
         rememberImage(mockOut);
         return json(res, 200, imageShape({ model, prompt, out: mockOut }));
       }
-      if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
-      const out = await enqueueScrape({ message: prompt, model, image: true, fresh: !!body.fresh });
+      if (MODE !== "direct") return json(res, 400, { error: "Image generation needs DUCK_MODE=direct" });
+      const out = await enqueueChat({ message: prompt, model, image: true, fresh: !!body.fresh });
       rememberImage(out);
       return json(res, 200, imageShape({ model: out.model, prompt, out, extra: { debug: out.debug } }));
     }
     if (req.method === "POST" && req.url === "/api/admin/update") {
-      if (!ADMIN_KEY) return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
+      if (!ADMIN_KEY) return json(res, 404, { error: "Not found. Try GET /health, GET /models, POST /chat, POST /image" });
       if (!adminKeyOk(req)) return json(res, 401, { error: "bad admin key" });
       const body = await readBody(req);
       const files = body.files && typeof body.files === "object" ? body.files : null;
@@ -544,7 +536,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
+    return json(res, 404, { error: "Not found. Try GET /health, GET /models, POST /chat, POST /image" });
   } catch (e) {
     const status = ["PLAYWRIGHT_MISSING", "JSDOM_MISSING", "MISSING_UPSTREAM_HEADERS"].includes(e.code) ? 501
       : e.code === "CHAT_REJECTED" ? e.status || 502 : 500;
